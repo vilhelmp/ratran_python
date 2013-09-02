@@ -1,6 +1,6 @@
 
 
-class Output(object):
+class Read(object):
     def __init__(self, popfile = '', directory = '', molfile = ''):
         """
         This class should take a directory and ratran output file

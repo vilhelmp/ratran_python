@@ -1,1 +1,0 @@
-class Input(object):pass

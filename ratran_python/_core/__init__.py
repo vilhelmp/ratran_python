@@ -24,4 +24,11 @@ _pl.rcParams['figure.facecolor'] = 'w'
 _pl.rcParams['font.size'] = 10
 #~ set_rc()
 
-from ..helpers import *
+from .. import helpers
+
+import ratout as ratout
+import ratin as ratin
+# read in main functions for
+# reading and making Ratran runs
+from ratout import Read
+from ratin import Make
