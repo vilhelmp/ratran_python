@@ -1,7 +1,5 @@
 
 
-class Input(object):pass
-
 class Output(object):
     def __init__(self, popfile = '', directory = '', molfile = ''):
         """
