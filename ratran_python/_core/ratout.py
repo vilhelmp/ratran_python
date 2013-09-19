@@ -1,7 +1,34 @@
+### Imports
+# python builtins
+import os as _os
+import sys as _sys
+import subprocess as _subprocess
+
+# python extra modules
+import scipy as _scipy
+from matplotlib import pyplot as _pl
+from matplotlib.transforms import blended_transform_factory as _btf
+
+# adapy internal imports
+#~ from ...libs import cgsconst as _cgs
+from .. import moldata as _moldata
+#~ from ...tools import get_colors as _gc
+
+#~ from ...views import set_rc
+#~ _pl.rcParams['text.usetex'] = True
+#~ _pl.rcParams['savefig.dpi'] = 300
+#~ _pl.rcParams['figure.dpi'] = 150
+_pl.rcParams['figure.facecolor'] = 'w'
+_pl.rcParams['font.size'] = 10
+#~ set_rc()
+
+from .. import helpers
+from .. import cgsconst as _cgs
+from ..helpers import get_colors as _gc
 
 
 class Read(object):
-    def __init__(self, popfile = '', directory = '', molfile = ''):
+    def __init__(self, popfile = '', directory = '', molfile = '', kappa = ''):
         """
         This class should take a directory and ratran output file
         and just read in whatever it can. Should have reasonable
@@ -43,7 +70,17 @@ class Read(object):
         ### Check molfile,
         if self._check_molfile(molfile):
             self.Moldata  = _moldata.Read(self.molfile)
+        ### Dust opacity
+        if self._check_kapfile(kappa):
+            if 'powerlaw' in self.Kappa.kappath:
+                # if we need a powerlaw
+                self._kappa_powerlaw()
+            else:
+                # else it is jena
+                self._read_kappa()
 
+
+        
     #### checking functions
     def _check_directory(self, directory):
         if directory:   # if directory input
@@ -82,7 +119,43 @@ class Read(object):
             # raise warning?
             print('Molfile neither input nor in population output.')
             return False
-        
+    
+    def _check_kapfile(self, kappa):
+        if kappa: # if kapfile was input
+            if not _os.path.isfile(kappa):
+                print('Kappa file does not exists/wrong path.')
+                return False
+            else: # it is a path to a file
+                self.kappath = kappa
+                return True
+        elif self.Pop.__dict__.has_key('kappa'):
+            # no file was input, get it from RATRAN
+            if 'powerlaw' in self.Pop.kappa: # powerlaw model of opacity
+                class Kappa:
+                    pass
+                Kappa.kappath = 'powerlaw'
+                self.Kappa = Kappa
+                return True
+            elif self.Pop.__dict__.has_key('ratran_path') and 'jena' in self.Pop.kappa: # else its jena..
+                kapfile = self.Pop.kappa.replace(',', '_')
+                kapfile = kapfile.__add__('.tab')           # file format
+                kapdir = _os.path.join(self.Pop.ratran_path, 'kappa')
+                kappath = _os.path.join(kapdir, kapfile)
+                print kappath
+                if not _os.path.isfile(kappath):
+                    print('Opacity (kappa) file does not exists/wrong path.')
+                    return False
+                else:
+                    class Kappa:
+                        pass
+                    Kappa.kapdir = kapdir
+                    Kappa.kappath = kappath
+                    self.Kappa = Kappa
+                    return True
+        else:
+            print('No dust opacity found (kappa)')
+            return False
+
     def _check_history_files(self):
         hisfiles = [i for i in _os.listdir(self.directory) if i[-3:] == 'his']
         if not hisfiles:
@@ -119,7 +192,12 @@ class Read(object):
                     line = f.readline()
             Pop.columns = Pop.columns.split(',')
             lines = f.readlines()
-            
+        # try to get the RATRAN path
+        if Pop.__dict__.has_key('molfile'):
+            i = Pop.molfile.split('/').index('molec')
+            path = Pop.molfile.split('/')[:i]
+            path.append('')
+            Pop.ratran_path = '/'.join(path)
         lines = array([i.strip().split() for i in lines], dtype='float')
         lines = lines.transpose()
         for colname, i in zip(Pop.columns, arange(len(Pop.columns))):
@@ -234,13 +312,34 @@ class Read(object):
                 Sky.chan = Sky.chan.split(',')
                 Sky.chan = [float(i) for i in Sky.chan]
             if hasattr(Sky,'trans'):
-                Sky.trans = Sky.trans.split(',')
-                Sky.trans = [int(i) for i in Sky.trans]
+                try:
+                    Sky.trans = Sky.trans.split(',')
+                    Sky.trans = [int(i) for i in Sky.trans]
+                except:
+                    pass
         self.Sky = Sky
 
     def _read_fits(self):
         print('Tjo')
-    
+
+    def kappa(self, nu, inunit='freq'):
+        if inunit == 'freq':
+            cm = _cgs.CC / nu
+        elif inunit == 'mum':
+            cm = nu * 1e-4
+        
+        from scipy import interpolate
+        value = interpolate.splev(_scipy.log10(cm), self.Kappa.tck)
+        return 10**(value)
+
+    def _read_kappa(self):
+        self.Kappa.table, self.Kappa.tck = helpers.get_kappa_jena(self.Kappa.kappath)
+
+    ### other functions
+    def _kappa_powerlaw(self):
+        # redefine kappa to be a powerlaw function
+         self.Kappa.tck = helpers.kappa_powerlaw( nu0 = 1e12, kappa0 = 15, beta = 1.8 )
+
     #### plotting functions
     ## for final populations
     def plot_structure(self):
@@ -258,24 +357,42 @@ class Read(object):
         # width in cm/s
         itup, itdown = trans[0] - 1, trans[1] - 1
 
-        transIndex = get_transindex(self, trans)
+        transIndex = helpers.get_transindex(self, trans)
         
         # First, get the opacity from the model outpupt
         class Tau: pass
         self.Tau = Tau
         # the density of the upper energy level
         # from the model data
-        self.Tau.Nu = Nu = (self.Pop.rb - self.Pop.ra) * 100.0 * self.Pop.nm * self.Pop.lp[itup]
+        self.Tau.ds = (self.Pop.rb - self.Pop.ra) * 100 # in cm, not m
+        self.Tau.Nu = Nu = self.Tau.ds * self.Pop.nm * self.Pop.lp[itup]
+        self.Tau.Nu = nu = self.Pop.nm * self.Pop.lp[itup]
+        self.Tau.Nl = Nl = self.Tau.ds * self.Pop.nm * self.Pop.lp[itdown]
+        self.Tau.Nl = nl = self.Pop.nm * self.Pop.lp[itdown]
         self.Tau.Au = Aul = self.Moldata.radtrans[transIndex]['aul']
         self.Tau.freq = freq = self.Moldata.radtrans[transIndex]['freq']
+
         self.Tau.Eu = Eu = self.Moldata.radtrans[transIndex]['eu']
+        self.Tau.gu = gu = self.Moldata.elev[itup]['weight']
+        self.Tau.gl = gl = self.Moldata.elev[itdown]['weight']
+
         self.Tau.T = T = self.Pop.tk
         # now calculate the opacity
-        tau = calc_tau(Nu, Aul, freq, width, Eu, T)
+        #~ tau = helpers.calc_dtau(Nu, Nl, Aul, freq, width, gu, gl, T)
+            #~ calc_alpha_line()
+
+        #~ self.nh2 = self.rhodust * 100  / (_cgs.MUH2 * _cgs.MP)
+        
+        
+        alpha_line = calc_alpha_line(nu, nl, Aul, freq, gu, gl, self.Pop.db)
+        alpha_dust = self.kappa(freq) * self.Pop.nh * _cgs.MUH2 * _cgs.MP/ self.Pop.gas_dust
+        #~ tau = calc_tau(Nu, Aul, freq, width, Eu, T)
         #~ inull = _scipy.where(tau == 0)
         #~ tau[inull] = 1E-15
+        tau = (alpha_line + alpha_dust) * self.Tau.ds
         self.Tau.tau = tau
-        
+        self.Tau.alpha_line = alpha_line
+        self.Tau.alpha_dust = alpha_dust
         
         
         # plotting
@@ -283,17 +400,19 @@ class Read(object):
         #~ fig = _pl.figure(num=1, figsize=(3.5,3))
         fig = _pl.figure(num=1)
         ax = fig.add_subplot(111)
+        ax.loglog(radii , alpha_line*self.Tau.ds, label=r'line', color='#559922', lw=2, marker='o', ms=3, mew=0)
+        ax.loglog(radii , alpha_dust*self.Tau.ds, label=r'dust', color='#992255', lw=2, marker='o', ms=3, mew=0)
         ax.loglog(radii , tau, label=r' - '.join([self.Moldata.get_lvl(i, tex = 1) for i in trans]), color=_gc(1).next(), lw=2, marker='o', ms=3, mew=0)
 
         
-        # Second, the calculate the opacity if it is pure LTE conditions
+        # Second, calculate the opacity if it is pure LTE conditions
         
         try:
             # first initialise the get_partition method
             # to get the partition function values
             # at all temperatures
             self.Moldata.get_partition()
-            plot_lte = True
+            plot_lte = False
         except:
             print ('cannot get the partition function values.')
             plot_lte = False
@@ -306,7 +425,7 @@ class Read(object):
             gu = self.Moldata.elev[itup]['weight']
             qrot = self.Moldata.qrot(T)
             self.Tau.Nu_lte = Nu_lte = nm * (rb - ra) * gu / qrot * _scipy.exp(-Eu/T)
-            tau_lte = calc_tau(Nu_lte, Aul, freq, width, Eu, T)
+            tau_lte = helpers.calc_tau_lte(Nu_lte,  Aul, freq, width, Eu, T)
             #~ inull = _scipy.where(tau_lte == 0)
             #~ tau_lte[inull] = 1E-15
             self.Tau.tau_lte = tau_lte
@@ -317,14 +436,14 @@ class Read(object):
         trans1 = _btf(ax.transData, ax.transAxes)
         linesetting = dict(color=_gc(1).next(), transform=trans1, lw=1,
                            ls='dashed')
-        ax.loglog([radii[-1], radii[-1]], [0, 1], **linesetting)
-        ax.loglog([radii[0], radii[0]], [0, 1],**linesetting )
+        ax.semilogx([radii[-1], radii[-1]], [0, 1], **linesetting)
+        ax.semilogx([radii[0], radii[0]], [0, 1],**linesetting )
         # labels, legend and grid
         ax.set_xlabel('Radius [AU]')
-        ax.set_ylabel(r'$\tau$')
+        ax.set_ylabel(r'$d\tau$')
         ax.legend()
         ax.grid()
-    
+
     def plot_populations(self, levels = [], runjump = 10, leveljump = 10):
         """ 
         Function to plot the populations level for 
@@ -455,3 +574,195 @@ class Read(object):
         ax.set_ylabel(r'S$_\nu$')
         #~ ax.legend()
         ax.grid()
+
+def _read_populations_simple(popfile):
+    """
+        Function to read in the populations file from RATRAN.
+        Outputs the comments and tables as separate lists of strings.
+    """
+    with open(popfile) as f:
+        line = f.readline()
+        comments = []
+        # get the comments
+        while not line.startswith('@'):
+            comments.append(line)
+            line = f.readline()
+        table = f.readlines()
+    return comments, table
+
+
+def _run_cell(args):
+    folder = args['folder']
+    cells = args['cells']
+    comments = args['comments'][:]
+    table = args['table'][:]
+    skyinp = args['skyinp']
+    popfile = args['popfile']
+    sky_text = args['sky_text'][:]
+    # peel of cells
+    table = table[:cells]
+    # change rmax
+    irmax = [i for i in xrange(len(comments)) if comments[i][:4] == 'rmax'][0]
+    comments[irmax] = 'rmax={0}\n'.format(table[-1].split()[2])
+    # change ncell
+    incell = [i for i in xrange(len(comments)) if comments[i][:5] == 'ncell'][0]
+    comments[incell] = 'ncell={0}\n'.format(len(table))
+    # create the popfile text to write
+    poptext = comments[:]
+    poptext.append('@\n')
+    temp = [poptext.append(i) for i in table]
+    # write sky.inp and populations.pop
+    with helpers.ChangeDirectory(folder):
+        # write sky.inp
+        with open(skyinp, 'w') as f:
+            f.writelines(sky_text)
+        with open(popfile, 'w') as f:
+            f.writelines(poptext)
+        # call sky on the setup
+        #~ _os.system('sky {0}'.format(skyinp))
+        import subprocess
+        RUN_SKY = '/home/magnusp/applications/Ratran/bin/sky'
+        #~ proc = subprocess.Popen([RUN_SKY, skyinp])
+        #~ _os.system(RUN_SKY+' '+skyinp)
+        f = open('sky.log', 'w')
+        f.close()
+        print('Running sky in {0}'.format(folder))
+        proc = subprocess.Popen([RUN_SKY, skyinp],
+                            stdout = subprocess.PIPE, 
+                            stderr = subprocess.STDOUT)
+        while True:
+            # first : if process is done, break the loop
+            if proc.poll() != None: 
+                break
+            nextline = proc.stdout.readline()
+            #~ print nextline
+            open('sky.log', 'a').write('{0}'.format(nextline))
+
+
+def _get_intensity_simple(fits_file):
+    from pyfits import getdata
+    data = getdata(fits_file)
+    contsub = data - data[0]
+    intensity = contsub.sum()
+    return intensity
+
+    
+def peel_onion( skyinp='sky.inp', popfile='populations.pop', fits_file='_007.fits' ):
+
+    #~ from scipy import arange
+    
+    comments, table  = _read_populations_simple(popfile)
+
+    t = table[:]
+    t = [i.strip('\n') for i in t]
+    t = [i.split() for i in t]
+    from scipy import array
+    ra = array(t, dtype='float').transpose()[1] * 100/_cgs.AU
+    rb = array(t, dtype='float').transpose()[2] * 100/_cgs.AU
+    r = (ra+rb)/2
+    with open(skyinp) as f:
+        sky_text = f.read()
+    # make the folders
+    no_cells = range(1,len(table) + 1)
+    folders = ['onion/{0}'.format(i) for i in no_cells]
+    try:
+        temp = [_os.makedirs('{0}'.format(i)) for i in folders]
+    except(OSError):
+        intensities = []
+        for folder in folders:
+            file_to_open = _os.path.join(folder, fits_file)
+            print file_to_open
+            intensity  = _get_intensity_simple(file_to_open)
+            intensities.append(intensity)
+        return intensities, table, comments, r
+        
+    #~ [_os.makedirs(i) for i in folders]
+
+
+    
+    #~ # run in parallell!
+    #~ try:
+        #~ import pprocess
+        #~ import multiprocessing
+        #~ multi = True
+    #~ except(ImportError):
+        #~ multi = False
+    #~ if multi:
+#~ 
+        #~ print('running in parallel (pprocess)')
+        #~ from time import time
+        #~ t1 = time()
+        #~ list_of_args = [dict(folder=i,
+                #~ cells=j,
+                #~ comments=comments,
+                #~ table=table,
+                #~ skyinp=skyinp,
+                #~ popfile=popfile,
+                #~ sky_text=sky_text) for (i,j) in zip(folders, no_cells)]
+        #~ nproc = pprocess.get_number_of_cores() - 1 
+        #~ results = pprocess.Map(limit=nproc, reuse=1)
+        #~ parallel_function = results.manage(pprocess.MakeReusable(_run_cell))
+        #~ [parallel_function(args) for args in list_of_args]
+        #~ parallel_results = results
+        #~ return parallel_results
+        #~ 
+    #~ elif not multi:
+    print('not running in parallel (not implemented)')
+    from time import time
+    t1 = time()
+    for folder, cells in zip( folders, no_cells):
+        #~ print folder, cells, comments, table, skyinp, popfile , sky_text
+        
+        to_send = dict(folder=folder,
+            cells=cells,
+            comments=comments,
+            table=table,
+            skyinp=skyinp,
+            popfile=popfile,
+            sky_text=sky_text)
+        # I've got a peeling!
+        _run_cell(to_send)
+        
+    print 'This took: '
+    print (time()-t1)
+    print 'seconds'
+
+    intensities = []
+    for folder in folders:
+        file_to_open = _os.path.join(folder, fits_file)
+        print file_to_open
+        intensity  = _get_intensity_simple(file_to_open)
+        intensities.append(intensity)
+   
+    return intensities, table, comments, r
+
+
+
+def calc_alpha_line(nu, nl, Aul, freq, gu, gl, db):
+    """
+    Calculate the absorption (alpha) for given parameters
+    from Rybicki & Lightman.
+    """
+    part1 = _cgs.CC**3 * Aul / ( 8 * _scipy.pi * freq**4 * db)
+    part2 = nl * gu / gl - nu
+    alpha = part1 * part2
+    
+    #~ alpha = _cgs.HH * nu / (4 * _scipiy.pi)
+    #~ dtau = _cgs.CC**2 / (8 * _scipy.pi * freq**2) * Aul * (Nl * gu / gl - Nu) 
+    #~ dtau = alpha * ds
+    
+    
+    #~ part1 = _cgs.CC**3 * Aul / (8 * _scipy.pi * freq**3 * width) 
+    #~ part2 = (_scipy.exp(Eu/T) - 1)
+    #~ part2 = (Nl * gu / float(gl) - Nu)
+    #~ return part1 * part2
+    return alpha
+
+
+
+
+
+
+
+
+

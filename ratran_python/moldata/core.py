@@ -64,8 +64,10 @@ class Read:
             return self.elev[int(level)-1]['j']
         if tex:
             lvl = self.elev[int(level)-1]['j'].split('_')
-            return ('${0[0]}_{{{0[1]},{0[2]}}}$'.format(lvl))
-
+            if len(lvl) > 1:
+                return ('${0[0]}_{{{0[1]},{0[2]}}}$'.format(lvl))
+            else:
+                return ('${0}$'.format(lvl[0]))
     def get_partition(self, 
             part_file_directory = '/home/magnusp/work/data/partition/', 
             part_file = ''):
