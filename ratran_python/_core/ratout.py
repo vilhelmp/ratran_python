@@ -25,6 +25,7 @@ _pl.rcParams['font.size'] = 10
 from .. import helpers
 from .. import cgsconst as _cgs
 from ..helpers import get_colors as _gc
+from ..helpers import *
 
 
 class Read(object):
@@ -735,7 +736,6 @@ def peel_onion( skyinp='sky.inp', popfile='populations.pop', fits_file='_007.fit
         intensities.append(intensity)
    
     return intensities, table, comments, r
-
 
 
 def calc_alpha_line(nu, nl, Aul, freq, gu, gl, db):
