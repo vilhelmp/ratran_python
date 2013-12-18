@@ -5,8 +5,8 @@ import sys as _sys
 import subprocess as _subprocess
 
 # python extra modules
-import scipy as _scipy
-from matplotlib import pyplot as _pl
+import scipy as _sp
+from matplotlib import pyplot as _pl; _pl.ion()
 from matplotlib.transforms import blended_transform_factory as _btf
 
 # adapy internal imports
@@ -22,6 +22,8 @@ _pl.rcParams['figure.facecolor'] = 'w'
 _pl.rcParams['font.size'] = 10
 #~ set_rc()
 
+
+
 from .. import helpers
 from .. import cgsconst as _cgs
 from ..helpers import get_colors as _gc
@@ -29,7 +31,7 @@ from ..helpers import *
 
 
 class Read(object):
-    def __init__(self, popfile = '', directory = '', molfile = '', kappa = ''):
+    def __init__(self, popfile = '', directory = '', molfile = '', kappa = '', skylogfile = ''):
         """
         This class should take a directory and ratran output file
         and just read in whatever it can. Should have reasonable
@@ -59,9 +61,12 @@ class Read(object):
         self.path_sky_input_file  = _os.path.join(self.directory, 'sky.inp')
         if _os.path.isfile(self.path_sky_input_file):
             self._read_sky_input()
-            ### Check fits output
-            if self._check_fits:
-                self._read_fits()
+        ### check sky log file
+        if self._check_sky_log(skylogfile):
+            self._read_sky_logfile()
+        ### Check fits output
+        if self._check_fits:
+            self._read_fits()
         ##### If there are no history files present, don't load anything.
         ### Check if history files present in directory
         if self._check_history_files(): # if so, read them
@@ -80,8 +85,6 @@ class Read(object):
                 # else it is jena
                 self._read_kappa()
 
-
-        
     #### checking functions
     def _check_directory(self, directory):
         if directory:   # if directory input
@@ -120,7 +123,18 @@ class Read(object):
             # raise warning?
             print('Molfile neither input nor in population output.')
             return False
-    
+
+    def _check_sky_log(self, skylogfile):
+        if not skylogfile: # if no name is supplied, try with 'sky.log'
+            skylogfile = 'sky.log'
+            # now, check if it exists
+        if not _os.path.isfile(skylogfile):
+            print('Sky log file does not exists/wrong path.')
+            return False
+        else:
+            self.skylogfile = skylogfile            
+            return True
+     
     def _check_kapfile(self, kappa):
         if kappa: # if kapfile was input
             if not _os.path.isfile(kappa):
@@ -227,7 +241,7 @@ class Read(object):
             with open(_os.path.join(self.directory, f)) as text:
                 lines = text.readlines()
                 fname = text.name
-            print('Reading file : {0}'.format(f))
+            #~ print('Reading file : {0}'.format(f))
             rawhdr = [c for c in lines if len(c)<100 and not c.startswith('@')]
             preamble = [i.strip().split('=') for i in rawhdr if not i.startswith('#')]
             while not onetime:
@@ -260,6 +274,7 @@ class Read(object):
             popfile.update(dict(header = rawhdr, rawdata = coldata))   
             # append to list of population file info
             tables.append(popfile)
+        print('History files read.')
         Pop_his.pop_tables = tables
         self.Pop_his = Pop_his
 
@@ -270,7 +285,7 @@ class Read(object):
             line = f.readline()
             Amc.comments = []
             while line != 'go\n':
-                print line
+                #~ print line
                 if line.startswith('#'):
                     Amc.comments.append(line)
                     line = f.readline()
@@ -294,7 +309,7 @@ class Read(object):
             line = f.readline()
             Sky.comments = []
             while line != 'go\n':
-                print line
+                #~ print line
                 if line.startswith('#'):
                     Sky.comments.append(line)
                     line = f.readline()
@@ -320,8 +335,41 @@ class Read(object):
                     pass
         self.Sky = Sky
 
+    def _read_sky_logfile(self):
+        #TODO : expand to read errors, msgs etc
+        # read in the whole sky log file, shouldn't be big
+        f = open(self.skylogfile)
+        lines = f.readlines()
+        f.close()
+        dust = [line.split()[1:] for line in lines if line.startswith('dtau_dust')]
+        line = [line.split()[1:] for line in lines if line.startswith('dtau_line')]
+        dust = _sp.array(dust, dtype='float')
+        line = _sp.array(line, dtype='float')
+        transitions = _sp.unique(dust[:,0])
+        shells = _sp.unique(dust[:,1])
+        dtau_dust = dict()
+        dtau_line = dict()
+        dtau_tot = dict()
+        for t in transitions:
+            d = []
+            l = []
+            for s in shells:
+                d.append( _sp.mean([i[2] for i in dust if ((i[0]==t) * (i[1]==s))]) )
+                l.append( _sp.mean([i[2] for i in line if ((i[0]==t) * (i[1]==s))]) )
+            dtau_dust[t] = _sp.copy(d)
+            dtau_line[t] = _sp.copy(l)
+            dtau_tot[t] = _sp.array(d) + _sp.array(l)
+        # create object to store in main class
+        class Tau(object):pass
+        Tau.dtau_dust = dtau_dust
+        Tau.dtau_line = dtau_line
+        Tau.dtau_tot = dtau_tot
+        Tau.transitions = transitions
+        Tau.shells = shells
+        self.Tau = Tau
+       
     def _read_fits(self):
-        print('Tjo')
+        print('Fits reading not implemented.')
 
     def kappa(self, nu, inunit='freq'):
         if inunit == 'freq':
@@ -330,7 +378,7 @@ class Read(object):
             cm = nu * 1e-4
         
         from scipy import interpolate
-        value = interpolate.splev(_scipy.log10(cm), self.Kappa.tck)
+        value = interpolate.splev(_sp.log10(cm), self.Kappa.tck)
         return 10**(value)
 
     def _read_kappa(self):
@@ -346,104 +394,104 @@ class Read(object):
     def plot_structure(self):
         pass
         
-    def plot_tau(self, trans = [12, 10], width = 1.0E4):
-        """
-        Plot opacity/optical depth (tau) and the optical depth in LTe
-        of each cell
-        """
-
-        radii = self.r_au
-        
-        # ra, rb in m, convert to cm
-        # width in cm/s
-        itup, itdown = trans[0] - 1, trans[1] - 1
-
-        transIndex = helpers.get_transindex(self, trans)
-        
-        # First, get the opacity from the model outpupt
-        class Tau: pass
-        self.Tau = Tau
-        # the density of the upper energy level
-        # from the model data
-        self.Tau.ds = (self.Pop.rb - self.Pop.ra) * 100 # in cm, not m
-        self.Tau.Nu = Nu = self.Tau.ds * self.Pop.nm * self.Pop.lp[itup]
-        self.Tau.Nu = nu = self.Pop.nm * self.Pop.lp[itup]
-        self.Tau.Nl = Nl = self.Tau.ds * self.Pop.nm * self.Pop.lp[itdown]
-        self.Tau.Nl = nl = self.Pop.nm * self.Pop.lp[itdown]
-        self.Tau.Au = Aul = self.Moldata.radtrans[transIndex]['aul']
-        self.Tau.freq = freq = self.Moldata.radtrans[transIndex]['freq']
-
-        self.Tau.Eu = Eu = self.Moldata.radtrans[transIndex]['eu']
-        self.Tau.gu = gu = self.Moldata.elev[itup]['weight']
-        self.Tau.gl = gl = self.Moldata.elev[itdown]['weight']
-
-        self.Tau.T = T = self.Pop.tk
-        # now calculate the opacity
-        #~ tau = helpers.calc_dtau(Nu, Nl, Aul, freq, width, gu, gl, T)
-            #~ calc_alpha_line()
-
-        #~ self.nh2 = self.rhodust * 100  / (_cgs.MUH2 * _cgs.MP)
-        
-        
-        alpha_line = calc_alpha_line(nu, nl, Aul, freq, gu, gl, self.Pop.db)
-        alpha_dust = self.kappa(freq) * self.Pop.nh * _cgs.MUH2 * _cgs.MP/ self.Pop.gas_dust
-        #~ tau = calc_tau(Nu, Aul, freq, width, Eu, T)
-        #~ inull = _scipy.where(tau == 0)
-        #~ tau[inull] = 1E-15
-        tau = (alpha_line + alpha_dust) * self.Tau.ds
-        self.Tau.tau = tau
-        self.Tau.alpha_line = alpha_line
-        self.Tau.alpha_dust = alpha_dust
-        
-        
-        # plotting
-        _pl.ion()
-        #~ fig = _pl.figure(num=1, figsize=(3.5,3))
-        fig = _pl.figure(num=1)
-        ax = fig.add_subplot(111)
-        ax.loglog(radii , alpha_line*self.Tau.ds, label=r'line', color='#559922', lw=2, marker='o', ms=3, mew=0)
-        ax.loglog(radii , alpha_dust*self.Tau.ds, label=r'dust', color='#992255', lw=2, marker='o', ms=3, mew=0)
-        ax.loglog(radii , tau, label=r' - '.join([self.Moldata.get_lvl(i, tex = 1) for i in trans]), color=_gc(1).next(), lw=2, marker='o', ms=3, mew=0)
-
-        
-        # Second, calculate the opacity if it is pure LTE conditions
-        
-        try:
-            # first initialise the get_partition method
-            # to get the partition function values
-            # at all temperatures
-            self.Moldata.get_partition()
-            plot_lte = False
-        except:
-            print ('cannot get the partition function values.')
-            plot_lte = False
-            
-        if plot_lte:
-            # Nu  = nm * (rb - ra) * gu / Qrot(T) * exp(-Eu/T)
-            nm = self.Pop.nm
-            ra = self.Pop.ra * 100 # in cm
-            rb = self.Pop.rb * 100 # in cm
-            gu = self.Moldata.elev[itup]['weight']
-            qrot = self.Moldata.qrot(T)
-            self.Tau.Nu_lte = Nu_lte = nm * (rb - ra) * gu / qrot * _scipy.exp(-Eu/T)
-            tau_lte = helpers.calc_tau_lte(Nu_lte,  Aul, freq, width, Eu, T)
-            #~ inull = _scipy.where(tau_lte == 0)
-            #~ tau_lte[inull] = 1E-15
-            self.Tau.tau_lte = tau_lte
-            # plot it
-            _pl.loglog(radii, tau_lte, label=r' LTE', color='#008822', lw=2, marker='o', ms=3, mew=0)
-
-        # plot end of model
-        trans1 = _btf(ax.transData, ax.transAxes)
-        linesetting = dict(color=_gc(1).next(), transform=trans1, lw=1,
-                           ls='dashed')
-        ax.semilogx([radii[-1], radii[-1]], [0, 1], **linesetting)
-        ax.semilogx([radii[0], radii[0]], [0, 1],**linesetting )
-        # labels, legend and grid
-        ax.set_xlabel('Radius [AU]')
-        ax.set_ylabel(r'$d\tau$')
-        ax.legend()
-        ax.grid()
+    #~ def plot_tau(self, trans = [12, 10], width = 1.0E4):
+        #~ """
+        #~ Plot opacity/optical depth (tau) and the optical depth in LTe
+        #~ of each cell
+        #~ """
+#~ 
+        #~ radii = self.r_au
+        #~ 
+        #~ # ra, rb in m, convert to cm
+        #~ # width in cm/s
+        #~ itup, itdown = trans[0] - 1, trans[1] - 1
+#~ 
+        #~ transIndex = helpers.get_transindex(self, trans)
+        #~ 
+        #~ # First, get the opacity from the model outpupt
+        #~ class Tau: pass
+        #~ self.Tau = Tau
+        #~ # the density of the upper energy level
+        #~ # from the model data
+        #~ self.Tau.ds = (self.Pop.rb - self.Pop.ra) * 100 # in cm, not m
+        #~ self.Tau.Nu = Nu = self.Tau.ds * self.Pop.nm * self.Pop.lp[itup]
+        #~ self.Tau.Nu = nu = self.Pop.nm * self.Pop.lp[itup]
+        #~ self.Tau.Nl = Nl = self.Tau.ds * self.Pop.nm * self.Pop.lp[itdown]
+        #~ self.Tau.Nl = nl = self.Pop.nm * self.Pop.lp[itdown]
+        #~ self.Tau.Au = Aul = self.Moldata.radtrans[transIndex]['aul']
+        #~ self.Tau.freq = freq = self.Moldata.radtrans[transIndex]['freq']
+#~ 
+        #~ self.Tau.Eu = Eu = self.Moldata.radtrans[transIndex]['eu']
+        #~ self.Tau.gu = gu = self.Moldata.elev[itup]['weight']
+        #~ self.Tau.gl = gl = self.Moldata.elev[itdown]['weight']
+#~ 
+        #~ self.Tau.T = T = self.Pop.tk
+        #~ # now calculate the opacity
+        #~ # tau = helpers.calc_dtau(Nu, Nl, Aul, freq, width, gu, gl, T)
+            #calc_alpha_line()
+#~ 
+        #~ # self.nh2 = self.rhodust * 100  / (_cgs.MUH2 * _cgs.MP)
+        #~ 
+        #~ 
+        #~ alpha_line = calc_alpha_line(nu, nl, Aul, freq, gu, gl, self.Pop.db)
+        #~ alpha_dust = self.kappa(freq) * self.Pop.nh * _cgs.MUH2 * _cgs.MP/ self.Pop.gas_dust
+        #~ # tau = calc_tau(Nu, Aul, freq, width, Eu, T)
+        #~ # inull = _sp.where(tau == 0)
+        #~ # tau[inull] = 1E-15
+        #~ tau = (alpha_line + alpha_dust) * self.Tau.ds
+        #~ self.Tau.tau = tau
+        #~ self.Tau.alpha_line = alpha_line
+        #~ self.Tau.alpha_dust = alpha_dust
+        #~ 
+        #~ 
+        #~ # plotting
+        #~ _pl.ion()
+        #~ # fig = _pl.figure(num=1, figsize=(3.5,3))
+        #~ fig = _pl.figure(num=1)
+        #~ ax = fig.add_subplot(111)
+        #~ ax.loglog(radii , alpha_line*self.Tau.ds, label=r'line', color='#559922', lw=2, marker='o', ms=3, mew=0)
+        #~ ax.loglog(radii , alpha_dust*self.Tau.ds, label=r'dust', color='#992255', lw=2, marker='o', ms=3, mew=0)
+        #~ ax.loglog(radii , tau, label=r' - '.join([self.Moldata.get_lvl(i, tex = 1) for i in trans]), color=_gc(1).next(), lw=2, marker='o', ms=3, mew=0)
+#~ 
+        #~ 
+        #~ # Second, calculate the opacity if it is pure LTE conditions
+        #~ 
+        #~ try:
+            #~ # first initialise the get_partition method
+            #~ # to get the partition function values
+            #~ # at all temperatures
+            #~ self.Moldata.get_partition()
+            #~ plot_lte = False
+        #~ except:
+            #~ print ('cannot get the partition function values.')
+            #~ plot_lte = False
+            #~ 
+        #~ if plot_lte:
+            #~ # Nu  = nm * (rb - ra) * gu / Qrot(T) * exp(-Eu/T)
+            #~ nm = self.Pop.nm
+            #~ ra = self.Pop.ra * 100 # in cm
+            #~ rb = self.Pop.rb * 100 # in cm
+            #~ gu = self.Moldata.elev[itup]['weight']
+            #~ qrot = self.Moldata.qrot(T)
+            #~ self.Tau.Nu_lte = Nu_lte = nm * (rb - ra) * gu / qrot * _sp.exp(-Eu/T)
+            #~ tau_lte = helpers.calc_tau_lte(Nu_lte,  Aul, freq, width, Eu, T)
+            #~ # inull = _sp.where(tau_lte == 0)
+            #~ # tau_lte[inull] = 1E-15
+            #~ self.Tau.tau_lte = tau_lte
+            #~ # plot it
+            #~ _pl.loglog(radii, tau_lte, label=r' LTE', color='#008822', lw=2, marker='o', ms=3, mew=0)
+#~ 
+        #~ # plot end of model
+        #~ trans1 = _btf(ax.transData, ax.transAxes)
+        #~ linesetting = dict(color=_gc(1).next(), transform=trans1, lw=1,
+                           #~ ls='dashed')
+        #~ ax.semilogx([radii[-1], radii[-1]], [0, 1], **linesetting)
+        #~ ax.semilogx([radii[0], radii[0]], [0, 1],**linesetting )
+        #~ # labels, legend and grid
+        #~ ax.set_xlabel('Radius [AU]')
+        #~ ax.set_ylabel(r'$d\tau$')
+        #~ ax.legend()
+        #~ ax.grid()
 
     def plot_populations(self, levels = [], runjump = 10, leveljump = 10):
         """ 
@@ -461,7 +509,7 @@ class Read(object):
                
         lenlvls = len(self.Pop.lp)
         if not levels:
-            levels = _scipy.arange(1, lenlvls+1, leveljump)
+            levels = _sp.arange(1, lenlvls+1, leveljump)
         #
         if hasattr(self, 'Pop_his'):
             tables_select = self.Pop_his.pop_tables[::10]
@@ -575,6 +623,27 @@ class Read(object):
         ax.set_ylabel(r'S$_\nu$')
         #~ ax.legend()
         ax.grid()
+
+    def plot_tau(self):
+        N = len(self.Tau.transitions)
+        if N % 3:
+            np = N / 3 + 1
+        else:
+            np = N / 3
+        ncol = 3
+        if N <3:
+            ncol = N
+        for i in self.Tau.transitions:
+            _pl.subplot(np, ncol, i)
+            _pl.step(self.r_au[1:], self.Tau.dtau_tot[i], 'k', label='Total', lw=1.5)
+            _pl.step(self.r_au[1:], self.Tau.dtau_line[i], 'b', label='Line', lw=1.5)
+            _pl.step(self.r_au[1:], self.Tau.dtau_dust[i], 'g', label='Dust', lw=1.5)
+            _pl.title(str(int(i)))
+            _pl.xlabel('r (AU)')
+            _pl.ylabel(r'$\tau$')
+            _pl.xscale('log')
+            _pl.yscale('log')
+            _pl.legend()
 
 def _read_populations_simple(popfile):
     """
@@ -743,25 +812,53 @@ def calc_alpha_line(nu, nl, Aul, freq, gu, gl, db):
     Calculate the absorption (alpha) for given parameters
     from Rybicki & Lightman.
     """
-    part1 = _cgs.CC**3 * Aul / ( 8 * _scipy.pi * freq**4 * db)
+    part1 = _cgs.CC**3 * Aul / ( 8 * _sp.pi * freq**4 * db)
     part2 = nl * gu / gl - nu
     alpha = part1 * part2
     
     #~ alpha = _cgs.HH * nu / (4 * _scipiy.pi)
-    #~ dtau = _cgs.CC**2 / (8 * _scipy.pi * freq**2) * Aul * (Nl * gu / gl - Nu) 
+    #~ dtau = _cgs.CC**2 / (8 * _sp.pi * freq**2) * Aul * (Nl * gu / gl - Nu) 
     #~ dtau = alpha * ds
     
     
-    #~ part1 = _cgs.CC**3 * Aul / (8 * _scipy.pi * freq**3 * width) 
-    #~ part2 = (_scipy.exp(Eu/T) - 1)
+    #~ part1 = _cgs.CC**3 * Aul / (8 * _sp.pi * freq**3 * width) 
+    #~ part2 = (_sp.exp(Eu/T) - 1)
     #~ part2 = (Nl * gu / float(gl) - Nu)
     #~ return part1 * part2
     return alpha
 
 
+def plot_onion(inp='_007.fits'):
 
+    intens,tab,com,r = peel_onion(fits_file=inp)
 
+    fig = _pl.figure()
+    fig.clf()
+    ax = fig.add_subplot(111)
 
+    inten_percent = intens/max(intens)*100
+    ax.step(r[1:], inten_percent[1:], where='post', lw=4, color='0.6')
+    ax.step(r[1:], inten_percent[1:], where='post', lw=2, color='#33AA33')
+    ax.set_xscale('log')
+    ax.set_ylim((-5, 105))
+    ax.grid(which='minor', axis='x')
+
+    ax2 = ax.twinx()
+    inten_add = [intens[i]-intens[i-1] for i in xrange(1,len(intens))]
+    #inten_add = [intens[i+1]-intens[i] for i in xrange(0,len(intens))]
+    ax2.step(r[1:], inten_add, where='post', lw=2, color='0.6')
+    ax2.step(r[1:], inten_add, where='post', lw=1, color='#3333AA')
+
+    ymin,ymax = min(inten_add), max(inten_add)
+    ymin, ymax = ymin-0.15*abs(ymin), ymax+0.35*abs(ymax)
+    ax2.set_ylim((ymin, ymax))
+
+    ax.set_xlim((20, 6000))
+
+    ax.set_xlabel('AU')
+    ax.set_ylabel('% of max intensity', weight='bold', size=12, color='#33AA33')
+    ax2.set_ylabel('Added intensity', weight='bold', size=12,color='#3333AA')
+    return ax, ax2
 
 
 

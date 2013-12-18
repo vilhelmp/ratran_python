@@ -101,23 +101,27 @@ def plot_ratraninput(directory = '', modelfile = "transphere.mdl"):
     
     # -2 because we dont want the first two cols, id and ra
     N = len(Ratran_mdl.columns) - 2
+    # now how many subplots do we need?
+    if N % 3:
+        np = N / 3 + 1
+    else:
+        np = N / 3
     pl.close()
     fig = pl.figure(1)#num = 1, figsize = ())
+    # create dictionary to send/return the axes back
     plots = dict()
+    # loop over the columns and plot
     for (i, dat) in zip(arange(N), Ratran_mdl.table[2:]):
         ax = 'ax{0}'.format(i)
         ylbl = Ratran_mdl.columns[i + 2]
-        # now how many subplots do we need?
-        if N % 3:
-            np = N / 3 + 1
-        else:
-            np = N / 3
+
         pln =  i +1
         if pln >1:
             plots[ax] = fig.add_subplot(np, 3, pln, sharex=plots['ax0'])
         else:
             plots[ax] = fig.add_subplot(np, 3, pln)
-        x = Ratran_mdl.ra*100/_cgs.AU
+        x = (Ratran_mdl.ra + Ratran_mdl.rb)/2*100/_cgs.AU
+        
         if ylbl in ['db', 'vr']:
             plots[ax].semilogx(x, dat, '.')
             plots[ax].semilogx(x, dat, '-')
@@ -143,11 +147,6 @@ def plot_ratraninput(directory = '', modelfile = "transphere.mdl"):
     #~ plots['ax{0}'.format(N-1)].set_xlabel('ra (AU)')
     fig.subplots_adjust(left=0.11, right= 0.97, bottom=0.11, top=0.96, wspace=0.43, hspace=0.15)
     return plots, fig
-
-
-
-
-
 
 class Make(object):
     def __init__(self, **kwargs):
