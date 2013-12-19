@@ -147,7 +147,9 @@ def plot_ratraninput(directory = '', modelfile = "transphere.mdl"):
     return plots, fig
 
 def ratran_environment_check():
-    # check RATRAN
+    # check RATRAN path
+    # get it from the environment variable
+    # "RATRAN", that needs to be set 
     try:
         ratran_path = _os.environ['RATRAN']
     except (KeyError):
