@@ -1,7 +1,6 @@
 import os as _os
 from .. import cgsconst as _cgs
-
-#~ class Make(object):pass
+from ..helpers import *
 
 def read_ratraninput(modelfile = "transphere.mdl"):
     """
@@ -86,7 +85,6 @@ def read_ratraninput(modelfile = "transphere.mdl"):
     Mdl.nm_rel[0] = 0.0
     return Mdl
 
-
 def plot_ratraninput(directory = '', modelfile = "transphere.mdl"):
     import matplotlib.pyplot as pl
     from scipy import arange, array
@@ -148,6 +146,24 @@ def plot_ratraninput(directory = '', modelfile = "transphere.mdl"):
     fig.subplots_adjust(left=0.11, right= 0.97, bottom=0.11, top=0.96, wspace=0.43, hspace=0.15)
     return plots, fig
 
+def ratran_environment_check():
+    # check RATRAN
+    try:
+        ratran_path = _os.environ['RATRAN']
+    except (KeyError):
+        ratran_path = False
+    if ratran_path:
+        ratran_bin = _os.path.join(ratran_path, 'bin')
+        global RUN_AMC
+        RUN_AMC = _os.path.join(ratran_bin, 'amc')
+        global RUN_SKY
+        RUN_SKY = _os.path.join(ratran_bin, 'sky')
+        return True
+    else:
+        print('Create an environment variable called RATRAN, '
+        'otherwise the binaries cannot be found.')
+        return False
+
 class Make(object):
     def __init__(self, **kwargs):
         """
@@ -192,7 +208,7 @@ class Make(object):
 
         from scipy import array
         # imports
-        import cgsconst as _cgs
+        #~ import cgsconst as _cgs
         from numpy import zeros, array, logspace, log10, where, pi, exp
         import scipy.interpolate
         import sys

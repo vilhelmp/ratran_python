@@ -160,25 +160,6 @@ def get_colors(color):
         col = [int(x) for x in _cs.hsv_to_rgb(hue, 1.0, 230)]
         yield "#{0:02x}{1:02x}{2:02x}".format(*col)
 
-def ratran_environment_check():
-    # check RATRAN
-    try:
-        ratran_path = _os.environ['RATRAN']
-    except (KeyError):
-        ratran_path = False
-    if ratran_path:
-        ratran_bin = _os.path.join(ratran_path, 'bin')
-        global RUN_AMC
-        RUN_AMC = _os.path.join(ratran_bin, 'amc')
-        global RUN_SKY
-        RUN_SKY = _os.path.join(ratran_bin, 'sky')
-        return True
-    else:
-        print('Create an environment variable called RATRAN, '
-        'otherwise the binaries cannot be found.')
-        return False
-
-
 class ChangeDirectory:
     def __init__(self, newPath):
         self.newPath = newPath
@@ -511,9 +492,43 @@ def write_ratraninput(self):
         f.write("q\n")
         f.write("\n")
 
+def check_input(input_dictionary, input_defaults):
+    return 0
 
-# FIXME, does not work tries to import old adavis module
- 
+def make_dirs(path):
+    import os
+    import errno
+    # the makedirs function will raise a EEXIST error 
+    # if the directory already exists, if so it returns False
+    # if some other error is raise, it will raise that 
+    try:
+        os.makedirs(path)
+    except OSError as exception:
+        if exception.errno != errno.EEXIST:
+            raise
+        else:
+            return False
+    return True
+
+class ChangeDirectory:
+    """
+    # Now you can enter the directory like this:
+    #~ import subprocess
+    #~ with cd("~/Library"):
+        #~ # we are in ~/Library
+        #~ run some code
+        #~ subprocess.call("ls")
+    """
+    def __init__(self, newPath):
+        self.newPath = newPath
+
+    def __enter__(self):
+        self.savedPath = _os.getcwd()
+        _os.chdir(self.newPath)
+
+    def __exit__(self, etype, value, traceback):
+        _os.chdir(self.savedPath)
+
 def create_molecular_abundance(temperature, 
                                 abund_type = 'jump', 
                                 Tjump = 100, 
