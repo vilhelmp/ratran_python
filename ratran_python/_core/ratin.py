@@ -146,10 +146,79 @@ def plot_ratraninput(directory = '', modelfile = "transphere.mdl"):
     fig.subplots_adjust(left=0.11, right= 0.97, bottom=0.11, top=0.96, wspace=0.43, hspace=0.15)
     return plots, fig
 
+def create_molecular_abundance(temperature, 
+                                abund_type = 'jump', 
+                                Tjump = 100, 
+                                Xs = [1E-4, 1E-9],
+                                smooth = 0):
+    """
+    IMPORTANT:
+    - assumes there is only one point where T > 100 K
+    - and that this point has the highest cell number of all cells with
+     T > 100 K
+    """
+    # calculates the molecular abundance from a predefined type and 
+    # options
+    # 'jump' abundance creates a jump from Xout to Xin 
+    # where (temperature > Tjump)
+    #
+    # smooth : create jump that spans several 'smooth' numer of cells
+    # -> should be an even number...
+    #
+    from scipy import where, ones, diff, sign, array, arange, exp
+    [Xin, Xout] = Xs
+    # jump abundance
+    if 'jump' in abund_type:
+        i100k = where(temperature >= Tjump)[0]
+        mol_abundance = ones(len(temperature)) * Xout
+        mol_abundance[i100k] = Xin
+        if not smooth:
+            print('discontinuity')
+            # if it should be a discontinuity
+            abund_param = False
+        if smooth:
+            # first make sure it is an even number of cellls to 
+            # smooth over
+            if smooth % 2 != 0:
+                smooth += 1
+                print('Argument \'smooth\' needs to be an even number',
+                    'adding one.')
+            # use sigmoid function to connect the discontinuities        
+            # assumes that the abundance is constant before 
+            # and after jump
+            ijump = max(i100k)
+            cells_x = ijump + array([-1, 1]) *  smooth/2
+            Xs_diff = diff(Xs)                  # outer - inner
+            d = direction = sign(Xs_diff)[0]    # direction of function
+            B = height = abs(Xs_diff)[0]        # height of the sigmoid
+            A = constant = max(Xs)              # curve start?-> min value
+            x0 = center = ijump+0.5
+            a = width = abs(diff(cells_x)[0])/10. # the width needs
+                                # to be very small, should investigate
+                                # and express more analytically
+            sigmoid = lambda x: A + d * B / (1 + exp(-(x - x0) / a))
+            #~ y_interp = splineinterpolate1d(x, y, k=2)
+            #~ x = arange(cells_x[0],cells_x[1],1);
+            #~ y = 1.0 / (1 + exp(-x / 0.1))
+            
+            #~ for i  in arange(x[0], x[1], 1):
+                #~ mol_abundance[i] = y_interp(i)
+            #~ mol_abundance[:x[0]] = Xin
+            for i in arange(cells_x[0], cells_x[1],1):
+                mol_abundance[i] = sigmoid(i)
+            abund_param = dict(constant = A, direction = d, height = B, center = x0, width = a)
+    # add more abundance types later on
+    else:
+        raise Exception('No abundance type given.')
+    # send back the calculated abundance
+    
+    return mol_abundance, abund_param
+
+
 def ratran_environment_check():
     # check RATRAN path
     # get it from the environment variable
-    # "RATRAN", that needs to be set 
+    # "RATRANRATRAN", that needs to be set 
     try:
         ratran_path = _os.environ['RATRAN']
     except (KeyError):
@@ -385,7 +454,6 @@ class Make(object):
             self.temp = self.temp[_index:]
             self.tdust = self.tdust[_index:]
             self.rhodust = self.rhodust[_index:]
-            
             if type(self.db) == type(1.0):
                 pass
             else:                
@@ -511,6 +579,8 @@ class Make(object):
         # RATRAN does not work well with them
         # after this you use the self.parameter.
         # TODO : perhaps not the best tactics..?
+        # even if we set Tconstouter, it could still cut off due
+        # to the density, which is good (?).
         self.r = self.r[:ind]           
         self.rhodust = self.rhodust[:ind]
         self.temp = self.temp[:ind]
