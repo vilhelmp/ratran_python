@@ -287,7 +287,8 @@ class Make(object):
         from scipy import array
         # imports
         #~ import cgsconst as _cgs
-        from numpy import zeros, array, logspace, log10, where, pi, exp
+        from scipy import zeros, array, logspace, log10
+        from scipy import where, pi, exp, zeros, diff
         import scipy.interpolate
         import sys
         import os
@@ -504,6 +505,7 @@ class Make(object):
         # rewrite this part when changing to object oriented
         # now it is very hack-ish and non pythonic
         ################################################################
+        ################################################################
         # MOLECULAR H2 NUMBER DENSITY
         # 
         # TODO : why time gas2dust here? <- changed to times 100
@@ -521,6 +523,7 @@ class Make(object):
         # rhogas / molecular mass = number density of H2 in cm-3
         
         ################################################################
+        ################################################################
         # Velocity grid
         #~ 
         #~ self.vr = -1 * sqrt(2 * cgs.GG * self.mstar / (ratr.r)) * 1E-5 # to go over to km/s
@@ -531,6 +534,7 @@ class Make(object):
         self.vr[self.vr == 0.0] = 1E-20
         #~ vr_negative = where(self.vr < 0.0)[0]
         #~ self.vr[vr_negative] *= -1
+        ################################################################
         ################################################################
         # ENVELOPE CUT OFF LIMIT
         #Find the envelope cut off for T and n
@@ -575,13 +579,13 @@ class Make(object):
         print self.r_10k, self.r.min()
         self.Y = self.r_10k / self.r.min()
         self.ind = ind
-        ################################################################
+        #
         # get values at r = 1000 AU
         ind_r1000 = where(self.r > 1000 * _cgs.AU)[0].min()
         self.rhodust_r1000 = self.rhodust[ind_r1000]
         self.nh2_r1000 =  self.nh2[ind_r1000]
         self.temp_r1000 = self.temp[ind_r1000]
-        ################################################################
+        #
         # cut off where T<templim OR nh2<nh2lim (8-10 K and 1E4 cm-3)
         # first we have to remove all cells where T<templim K
         # RATRAN does not work well with them
@@ -597,26 +601,168 @@ class Make(object):
         self.nh2 = self.nh2[:ind]
         self.vr = self.vr[:ind]
         ################################################################
+        ################################################################
         # Refinement, for the refinement, easiest way is to redefine rx!
         # isn't it weird to first create a grid in transphere, and then 
         # another here?
         # need to be able to create a refinement grid, so perhaps just 
         # a handfull of cells outside of Tjump, and alot inside of it
         #
-        ### TODO : REFINEMENT
+        # TODO new grid making method
+        # TODO  refactor code!
         """
         What needs to be done here:
         - refinement around the Tjump, if smoothjump is True
         - refinement inside of 100 K
         -> several regions with different cell-density
         """
+        # 'rrefs',                      [0],          'AU',     'list',   # what intervals to boost the number of points
+        # 'npsref',                     [0],            '',     'list',   # how many points to create in each rrefs interval
+        # 'refspace',               ['log'],            '',     'list',   # what type spacing for the reference grid
+        # 'ncell',                       20,            '',      'int',   # Number of grid cells
+        #
+        # how to input
+        # if ncell = 20, then its just like below, the whole range of radii
+        # if ncell =[10,20], then 'rrefs' has to be input with one value
+        # so between rin and rrefs[0] you get ncell[0] cells.
+
+        # ONE grid
+        # if its 0 = only one grid
+        if not self.Input.rrefs[0]: 
+            self.rx = logspace( log10( self.r[0] ),
+                        log10( self.r[-1] ),
+                        num = self.ncell + 1,
+                        endpoint = True
+                        )
+        # SEVERAL grids
+        # if its not 0, then we have n_grids > 1
+        elif self.Input.rrefs[0]: 
+            #~ from scipy import linspace
+            self.rrefs = [i * _cgs.AU for i in self.Input.rrefs] # AU to cm
+            # refinement spacing, log or linear?
+            # commented this out
+            #~ if len(self.Input.refspace) != len(self.Input.rrefs)/2:
+                #~ print('Warning, to few refspace supplied, '
+                        #~ 'not as many as rrefs, assuming the first/default '
+                        #~ 'is the same for all.')
+                #~ self.refspace = [self.Input.rrefs[0] for i in range(len(self.Input.refspace))]
+
+            # pick out the start and stop intervals
+            r_grids = [] # list of radius grids to concatenate later
+            
+
+            starts, stops = self.rrefs[0::2], self.rrefs[1::2]
+            self.npsref = self.Input.npsref
+
+
+
+
+            
+##### copy start
+        if len(self.Input.rrefs) > 1: # if refinement radius' have been input
+            from scipy import linspace, logspace, where, zeros, diff, log10
+            # convert the refinement radii to cm from AU
+            print('refinements!')
+            self.rrefs = [i * _cgs.AU for i in self.Input.rrefs] # AU to cm
+            
+            #~ if len(self.Input.refspace) != len(self.Input.rrefs)/2:
+                #~ print('Warning, to few refspace supplied, '
+                        #~ 'not as many as rrefs, assuming the first/default '
+                        #~ 'is the same for all.')
+                #~ self.refspace = [self.Input.rrefs[0] for i in range(len(self.Input.refspace))]
+            
+            # check if the intervals overlap
+            if (diff(self.rrefs)<0).any():
+                raise ValueError('The refinement intervals '
+                                'cannot overlap!')
+            
+            # pick out the start and stop intervals
+            r_grids = [] # list of radius grids to concatenate later
+            starts, stops = self.rrefs[0::2], self.rrefs[1::2]
+            self.npsref = self.Input.npsref
+            
+            # needed for when we replace the stuff in the radii array
+            gridlist = copy(self.rx)
+            
+            
+            for start, stop, npoints, spacing in zip(starts, stops, self.npsref, self.Input.refspace):
+                # strict or loose boundaries?
+                # create linspace grids in each interval
+                # and merge into the large scale grid
+                # is stop larger than end of grid?
+                endpoint_bool =  (stop >= self.rx[-1])
+                # copy it so that we retain the original value 
+                # during the loop
+                gridstart, gridstop = copy(start), copy(stop)
+                # if stop point further out that last grid point
+                # set it to the last grid point
+                if gridstop > self.rx[-1]:
+                    gridstop = self.rx[-1]
+                # is the start point less than innermost grid point?
+                # set it to innermost gridpoint
+                if gridstart < self.rx[0]:
+                    gridstart = self.rx[0] 
+                print('refinement from {0} to {1}'.format(gridstart,gridstop))
+                # is the grid linear or log spaced?
+                if spacing.lower() in ['lin', 'linear', 'linspace']:
+                    # create that part of the grid and change rx accordingly
+                    r_grid = linspace(gridstart, gridstop, 
+                                        num = npoints, 
+                                        endpoint = endpoint_bool)
+                elif spacing.lower() in ['log', 'logarithm', 'logarithmic', 'logspace']:
+                    # create that part of the grid and change rx accordingly
+                    r_grid = logspace(log10(gridstart), log10(gridstop), 
+                                        num = npoints, 
+                                        endpoint = endpoint_bool)
+                    
+                # now we have ended up with a list of grids that
+                # we want to replace in the original grid
+                
+                #~ print rx
+                # index of start and stop
+                i_start = min(where(self.rx >= gridstart)[0])
+                i_stop = max(where(self.rx <= gridstop)[0])
+                #~ print(i_start, i_stop)
+                
+                # input into grid
+                gridlist[i_start : i_stop + 1] = r_grid[:]
+                
+                # NOTE : The rx < stop means that if stop roughly 
+                # equals rx[-1] then it might miss it an raise an error!
+                
+                #~ cell_replace = where((rx >= start) * (rx < stop))[0]
+                #~ cells_left = where((rx < start) * (rx => stop))[0]
+                #~ new_grid = zeros(len(cells_left) + npoints)
+            self.rx = array(gridlist)
+            #~ self.rx = self.rx
+            #~ # units should be in cm
+            #~ self.rrefs_cm = [i*_cgs.AU for i in self.Input.rrefs]
+        else:
+            print('no refinement!')
+        #~ return None
+        self.rx = np.insert(self.rx, 0, 0)
+        self.r1 = self.rx[0:-1]
+        self.r2 = self.rx[1:]
+        
+        #~ from scipy import dstack
+        #~ self.rr = dstack((self.r1, self.r2)).ravel()
+        
+        #~ r1=np.insert(r[0:-1],0,0)
+        #~ r2=np.array(r)
+        self.rr = zeros(len(self.rx)-1, float)
+##### copy end
+
+
+        #####################################
+        #####################################
+        #####################################
+
+        
         ### Step 1
         # first create the rough overlying grid
         # the grid is now in centi-meters
-
-
         #
-        # TODO NEW GRID MAKING METHOD
+        
         """
         input all the refinements, create the segments of gridpoints
         one at a time, create separate function for this as well
@@ -725,12 +871,15 @@ class Make(object):
         #~ r1=np.insert(r[0:-1],0,0)
         #~ r2=np.array(r)
         self.rr = zeros(len(self.rx)-1, float)
-        #############
-        # TODO
-        # rr needs to be the the averaged radius in that cell!!
-        # 
+        ################################################################
+        ################################################################
+        # INTERPOLATION of values
+        # grid point distances allways have to be logarithmically spaces
+        # does linear even make sense?
+        # TODO : rr needs to be the the averaged radius in that cell!!
+        # i.e. center of mass!!!
+        #
         # create rr array which is just the mean radius of each cell
-        
         # assumes all spacings are logarithmic!!!
         self.rr[1:] = 10**( (log10(self.r1[1:]) + log10(self.r2[1:])) / 2.0 )
         
@@ -771,14 +920,20 @@ class Make(object):
         ############################
         # nh2 needs to start at 0
         self.nh2int[0] = 0.0
-        
+
+        ################################################################
+        ################################################################
+        # O/P ratio of H2
         # define teint, ortho, para
         self.teint = self.tkint
         self.opr = 9.0 * exp(-170.6 / self.teint)
         self.opr = np.clip(self.opr, 1.0E-3, 3.0)
         self.para = 1.0 / (1 + self.opr)
         self.ortho = 1 - self.para
-        
+
+        ################################################################
+        ################################################################
+        # mass 
         # mass of it all
         #~ vol=[]
         #~ mass=[]
