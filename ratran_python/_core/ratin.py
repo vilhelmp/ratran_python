@@ -1,6 +1,7 @@
 import os as _os
 from .. import cgsconst as _cgs
 from ..helpers import *
+import scipy as _sp
 
 def read_ratraninput(modelfile = "transphere.mdl"):
     """
@@ -179,24 +180,26 @@ def create_molecular_abundance(temperature,
         if smooth:
             # first make sure it is an even number of cellls to 
             # smooth over
-            if smooth % 2 != 0:
-                smooth += 1
-                print('Argument \'smooth\' needs to be an even number',
-                    'adding one.')
+            #~ if smooth % 2 != 0:
+                #~ smooth += 1
+                #~ print('Argument \'smooth\' needs to be an even number',
+                    #~ 'adding one.')
             # use sigmoid function to connect the discontinuities        
             # assumes that the abundance is constant before 
             # and after jump
-            ijump = max(i100k)
-            cells_x = ijump + array([-1, 1]) *  smooth/2
-            Xs_diff = diff(Xs)                  # outer - inner
-            d = direction = sign(Xs_diff)[0]    # direction of function
-            B = height = abs(Xs_diff)[0]        # height of the sigmoid
-            A = constant = max(Xs)              # curve start?-> min value
-            x0 = center = ijump+0.5
-            a = width = abs(diff(cells_x)[0])/10. # the width needs
-                                # to be very small, should investigate
-                                # and express more analytically
-            sigmoid = lambda x: A + d * B / (1 + exp(-(x - x0) / a))
+            ijump = max(i100k) - _sp.ceil(smooth/2.)
+            Xdiff = _sp.log10(Xin-Xout) # log difference
+            dX = Xdiff/float(smooth)    # increase in abundance for each cell
+            cells_x = [ijump, ijump + smooth]
+            #~ Xs_diff = diff(Xs)                  # outer - inner
+            #~ d = direction = sign(Xs_diff)[0]    # direction of function
+            #~ B = height = abs(Xs_diff)[0]        # height of the sigmoid
+            #~ A = constant = max(Xs)              # curve start?-> min value
+            #~ x0 = center = ijump+0.5
+            #~ a = width = abs(diff(cells_x)[0])/10. # the width needs
+                                #~ # to be very small, should investigate
+                                #~ # and express more analytically
+            #~ sigmoid = lambda x: A + d * B / (1 + exp(-(x - x0) / a))
             #~ y_interp = splineinterpolate1d(x, y, k=2)
             #~ x = arange(cells_x[0],cells_x[1],1);
             #~ y = 1.0 / (1 + exp(-x / 0.1))
@@ -204,15 +207,19 @@ def create_molecular_abundance(temperature,
             #~ for i  in arange(x[0], x[1], 1):
                 #~ mol_abundance[i] = y_interp(i)
             #~ mol_abundance[:x[0]] = Xin
+            j = 1
             for i in arange(cells_x[0], cells_x[1],1):
-                mol_abundance[i] = sigmoid(i)
-            abund_param = dict(constant = A, direction = d, height = B, center = x0, width = a)
+                #~ mol_abundance[i] = sigmoid(i)
+                mol_abundance[i] = mol_abundance[cells_x[0]] - 10**(dX * j)
+                #~ print mol_abundance[i]
+                j += 1
+            #~ abund_param = dict(constant = A, direction = d, height = B, center = x0, width = a)
     # add more abundance types later on
     else:
         raise Exception('No abundance type given.')
     # send back the calculated abundance
     
-    return mol_abundance, abund_param
+    return mol_abundance #, abund_param
 
 
 def ratran_environment_check():
@@ -477,7 +484,8 @@ class Make(object):
         
         # calculate the radial dependence of the molecular
         # abundance depends on what type of abundance type is choosen
-        self.abund, self.abund_param =  create_molecular_abundance(self.temp, 
+        #~ self.abund, self.abund_param =  create_molecular_abundance(self.temp, 
+        self.abund =  create_molecular_abundance(self.temp, 
                                 abund_type = self.Input.abundtype, 
                                 Tjump = self.Input.tjump, 
                                 Xs = self.Input.xs,
@@ -605,6 +613,15 @@ class Make(object):
         ### Step 1
         # first create the rough overlying grid
         # the grid is now in centi-meters
+
+
+        #
+        # TODO NEW GRID MAKING METHOD
+        """
+        input all the refinements, create the segments of gridpoints
+        one at a time, create separate function for this as well
+        
+        """
         self.rx = logspace(log10(self.r[0]), log10(self.r[-1]), num = self.ncell + 1, endpoint = True)
         self.rx_original = self.rx
         
@@ -640,31 +657,27 @@ class Make(object):
             self.npsref = self.Input.npsref
             
             # needed for when we replace the stuff in the radii array
-            gridlist = list(self.rx)
+            gridlist = copy(self.rx)
             
-            print starts, stops
+            
             for start, stop, npoints, spacing in zip(starts, stops, self.npsref, self.Input.refspace):
                 # strict or loose boundaries?
                 # create linspace grids in each interval
                 # and merge into the large scale grid
-                
                 # is stop larger than end of grid?
                 endpoint_bool =  (stop >= self.rx[-1])
-                
                 # copy it so that we retain the original value 
                 # during the loop
-                gridstart, gridstop = start, stop
-                                
+                gridstart, gridstop = copy(start), copy(stop)
                 # if stop point further out that last grid point
                 # set it to the last grid point
-                if gridstop > self.rx[-1]: gridstop = self.rx[-1]
-                
+                if gridstop > self.rx[-1]:
+                    gridstop = self.rx[-1]
                 # is the start point less than innermost grid point?
                 # set it to innermost gridpoint
-                if gridstart < self.rx[0]: gridstart = self.rx[0] 
-                
+                if gridstart < self.rx[0]:
+                    gridstart = self.rx[0] 
                 print('refinement from {0} to {1}'.format(gridstart,gridstop))
-                
                 # is the grid linear or log spaced?
                 if spacing.lower() in ['lin', 'linear', 'linspace']:
                     # create that part of the grid and change rx accordingly
@@ -687,7 +700,7 @@ class Make(object):
                 #~ print(i_start, i_stop)
                 
                 # input into grid
-                gridlist[i_start : i_stop + 1] = list(r_grid)
+                gridlist[i_start : i_stop + 1] = r_grid[:]
                 
                 # NOTE : The rx < stop means that if stop roughly 
                 # equals rx[-1] then it might miss it an raise an error!

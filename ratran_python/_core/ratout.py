@@ -853,7 +853,7 @@ def plot_onion(inp='_007.fits'):
     ymin, ymax = ymin-0.15*abs(ymin), ymax+0.35*abs(ymax)
     ax2.set_ylim((ymin, ymax))
 
-    ax.set_xlim((20, 6000))
+    ax.set_xlim((r[1]*0.95, r[-1]*1.05))
 
     ax.set_xlabel('AU')
     ax.set_ylabel('% of max intensity', weight='bold', size=12, color='#33AA33')
