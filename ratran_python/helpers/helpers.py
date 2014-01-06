@@ -5,7 +5,7 @@ import scipy as _scipy
 # perhaps put help functions in separate file?
 # help.py, extra.py,
 
-
+NiceLineSettings = dict(lw = 1.5, ms = 3, marker = '.')
 
 ### Help functions
 def bplanck(nu, T):
@@ -531,7 +531,7 @@ class ChangeDirectory:
 
 # temporary function
 # needs to be more modular
-def plot_envstruct(self, mol_abundance = '', mark100k = True, **kawargs):
+def plot_envstruct(self, mol_abundance = '', mark100k = True, **kwargs):
     if not hasattr(self, 'Envstruct'):
         raise Exception('you havent read in the transphere output')
     import matplotlib.pyplot as pl
@@ -543,12 +543,13 @@ def plot_envstruct(self, mol_abundance = '', mark100k = True, **kawargs):
     pl.grid()
     ax2 = ax1.twinx()
     # Density
-    p1 = ax1.loglog(self.Envstruct.r/_cgs.AU, self.n_h2, label='n_H2', **kawargs)
+    settings = dict(kwargs.items() + NiceLineSettings.items())
+    p1 = ax1.loglog(self.Envstruct.r/_cgs.AU, self.n_h2, label='n_H2', **settings)
     ax1.set_xlabel('Radius (AU)')
     #~ ax1.set_xscale('log')
     ax1.set_ylabel('Number Density (cm-3)')
     # Temperature
-    p2 = ax2.loglog(self.Envstruct.r/_cgs.AU, self.Envstruct.temp, color='r', label='Temp', **NiceLineSettings)
+    p2 = ax2.loglog(self.Envstruct.r/_cgs.AU, self.Envstruct.temp, color='r', label='Temp', **settings)
 
     ax2.yaxis.set_major_formatter(ScalarFormatter())
     
