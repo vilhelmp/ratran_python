@@ -14,7 +14,10 @@ class Read:
         #~ i = 0
         #~ while molref[i] != '!LEVEL + ENERGIES(cm^-1) + WEIGHT + J, Ka, Kc':
         for i in arange(len(molref)):
+            print str(molref[i]).lower()
             if '!LEVEL + ENERGIES'.lower() in str(molref[i]).lower():
+                ilvl = i + 1
+            elif '!LEVEL + ENERGY'.lower() in str(molref[i]).lower():
                 ilvl = i + 1
             elif '!TRANS + UP + LOW + EINSTEINA'.lower() in str(molref[i]).lower():
                 rtlvl = i + 1

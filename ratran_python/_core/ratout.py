@@ -19,7 +19,7 @@ from .. import moldata as _moldata
 #~ _pl.rcParams['savefig.dpi'] = 300
 #~ _pl.rcParams['figure.dpi'] = 150
 _pl.rcParams['figure.facecolor'] = 'w'
-_pl.rcParams['font.size'] = 10
+_pl.rcParams['font.size'] = 14
 #~ set_rc()
 
 
