@@ -6,3 +6,4 @@ import ratin as ratin
 # reading and making Ratran runs
 from ratout import Read
 from ratin import Make
+from ratin import MakeSky
